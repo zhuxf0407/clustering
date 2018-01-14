@@ -1,0 +1,115 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Jan 14 17:22:26 2018
+
+@author: zxf@cqut.edu.cn
+"""
+
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn import metrics
+from sklearn.datasets import load_iris
+import keras.backend as K
+from keras.engine.topology import Layer, InputSpec
+from keras.layers import Dense, Input
+from keras.models import Model
+from keras.optimizers import SGD
+from keras.utils.vis_utils import plot_model
+np.random.seed(1234)
+
+iris = load_iris()
+x = iris.data
+y = iris.target
+n_clusters = len(set(y))
+
+
+def autoencoder(dims, act='relu'):
+    """
+    Fully connected auto-encoder model, symmetric.
+    Arguments:
+        dims: list of number of units in each layer of encoder. dims[0] is input dim.
+              dims[-1] is units in hidden layer.
+              The decoder is symmetric with encoder. So number of layers of the auto-encoder
+              is 2*len(dims) - 1
+        act: activation, not applied to Input, Hidden and Output layers.
+    Return:
+        Model of autoencoder        
+    """
+    n_stacks = len(dims)-1
+    #input
+    x = Input(shape=(dims[0],), name='input')
+    h = x
+    
+    #internal layers in encoder
+    for i in range(n_stacks-1):
+        h = Dense(dims[i+1], activation=act, name='encoder_%d' % i)(h)
+    
+    #hidden_layer, features are extracted from here
+    h = Dense(dims[-1], name='encoder_%d' % (n_stacks-1))(h)
+    
+    #internal layers in decoder    
+    for i in range(n_stacks-1, 0 , -1):
+        h = Dense(dims[i], activation=act, name='decoder_%d' % i)(h)
+    
+    #output
+    h = Dense(dims[0], name='decoder_0')(h)
+    
+    return Model(inputs = x, outputs=h)
+
+dims = [4,100,200,100]
+ae = autoencoder(dims=dims)
+encoder = Model(inputs=ae.input, outputs=ae.get_layer(name='encoder_%d' %(len(dims)-2)).output)
+
+ae.compile(optimizer='adam', loss='mse')
+ae.fit(x,x,batch_size=16,epochs=50)
+
+
+h = encoder.predict(x)
+
+def cluster_acc(y_true, y_pred):
+    """
+    Calculate clustering accuracy. Require scikit-learn installed
+
+    # Arguments
+        y: true labels, numpy.array with shape `(n_samples,)`
+        y_pred: predicted labels, numpy.array with shape `(n_samples,)`
+
+    # Return
+        accuracy, in [0,1]
+    """
+    y_true = y_true.astype(np.int64)
+    assert y_pred.size == y_true.size
+    D = max(y_pred.max(), y_true.max()) + 1  # y_true.max() 表示y_true中最大的类是什么？
+    w = np.zeros((D, D), dtype=np.int64)
+    for i in range(y_pred.size):
+        w[y_pred[i], y_true[i]] += 1
+    from sklearn.utils.linear_assignment_ import linear_assignment
+    ind = linear_assignment(w.max() - w)
+    return sum([w[i, j] for i, j in ind]) * 1.0 / y_pred.size
+
+
+def evaluate(y, y_pred):
+    acc = np.round(cluster_acc(y, y_pred), 5)
+    nmi = np.round(metrics.normalized_mutual_info_score(y, y_pred), 5)
+    ari = np.round(metrics.adjusted_rand_score(y, y_pred), 5)
+    print('acc', acc, ', nmi', nmi, ',ari', ari)
+
+
+kmeans = KMeans(n_clusters=n_clusters, n_init=20)
+y_pred = kmeans.fit_predict(x)
+evaluate(y,y_pred)
+
+kmeans = KMeans(n_clusters=n_clusters, n_init=20)
+y_pred = kmeans.fit_predict(h)
+evaluate(y,y_pred)
+
+
+#print(kmeans.cluster_centers_)
+"""
+acc 0.89333 , nmi 0.75821 ,ari 0.73024
+acc 0.91333 , nmi 0.79414 ,ari 0.77263  #ae.fit(x,x,batch_size=16,epochs=50)
+acc 0.9 , nmi 0.76606 ,ari 0.74368      #ae.fit(x,x,batch_size=64,epochs=50)
+
+"""
+
+
